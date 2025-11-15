@@ -7,10 +7,13 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 # Переменные окружения
 # =========================
 TOKEN = os.getenv("TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+ADMIN_IDS = [
+    int(os.getenv("ADMIN_ID1")),
+    int(os.getenv("ADMIN_ID2"))
+]
 
-if not TOKEN or not ADMIN_ID:
-    raise ValueError("Необходимо задать переменные окружения TOKEN и ADMIN_ID")
+if not TOKEN or not all(ADMIN_IDS):
+    raise ValueError("Необходимо задать переменные окружения TOKEN, ADMIN_ID1 и ADMIN_ID2")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -54,51 +57,57 @@ async def category_selected(callback: CallbackQuery):
     await callback.answer()
 
 # =========================
-# Отправка сообщения админу
+# Отправка сообщения админам
 # =========================
 @dp.message()
-async def forward_to_admin(message: Message):
+async def forward_to_admins(message: Message):
     user_id = message.from_user.id
     if user_id not in reply_targets or not reply_targets[user_id]["awaiting"]:
         return
 
     category = reply_targets[user_id]["category"]
-    admin_keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="✉️ Ответить", callback_data=f"reply_to_{user_id}")]]
-    )
-
-    if message.text:
-        await bot.send_message(
-            ADMIN_ID,
-            f"📩 Сообщение от @{message.from_user.username or 'Без имени'} (ID: {user_id})\n"
-            f"Категория: *{category}*\n\n"
-            f"{message.text}",
-            reply_markup=admin_keyboard,
-            parse_mode="Markdown"
+    for admin_id in ADMIN_IDS:
+        admin_keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="✉️ Ответить", callback_data=f"reply_to_{user_id}")]]
         )
-    else:
-        caption = f"📩 Сообщение от @{message.from_user.username or 'Без имени'} (ID: {user_id})\nКатегория: *{category}*"
-        await message.send_copy(ADMIN_ID, caption=caption, reply_markup=admin_keyboard)
+        if message.text:
+            await bot.send_message(
+                admin_id,
+                f"📩 Сообщение от @{message.from_user.username or 'Без имени'} (ID: {user_id})\n"
+                f"Категория: *{category}*\n\n"
+                f"{message.text}",
+                reply_markup=admin_keyboard,
+                parse_mode="Markdown"
+            )
+        else:
+            caption = f"📩 Сообщение от @{message.from_user.username or 'Без имени'} (ID: {user_id})\nКатегория: *{category}*"
+            await message.send_copy(admin_id, caption=caption, reply_markup=admin_keyboard)
 
     reply_targets[user_id]["awaiting"] = False
-    await message.answer("✅ Ваше сообщение отправлено администратору!")
+    await message.answer("✅ Ваше сообщение отправлено администраторам!")
 
 # =========================
-# Админ отвечает пользователю
+# Админы отвечают пользователям
 # =========================
 @dp.callback_query(F.data.startswith("reply_to_"))
 async def admin_reply_mode(callback: CallbackQuery):
     user_id = int(callback.data.replace("reply_to_", ""))
-    reply_targets[ADMIN_ID] = {"reply_to": user_id, "awaiting": True}
+    admin_id = callback.from_user.id
+    if admin_id not in ADMIN_IDS:
+        await callback.answer("❌ Вы не админ!", show_alert=True)
+        return
+
+    reply_targets[admin_id] = {"reply_to": user_id, "awaiting": True}
     await callback.message.answer(f"✏️ Напишите ответ для пользователя {user_id}:")
     await callback.answer()
 
-@dp.message(F.chat.id == ADMIN_ID)
+@dp.message(F.chat.id.in_(ADMIN_IDS))
 async def send_admin_reply(message: Message):
-    if not reply_targets.get(ADMIN_ID, {}).get("awaiting"):
+    admin_id = message.from_user.id
+    if not reply_targets.get(admin_id, {}).get("awaiting"):
         return
 
-    target_id = reply_targets[ADMIN_ID]["reply_to"]
+    target_id = reply_targets[admin_id]["reply_to"]
     try:
         await message.send_copy(target_id)
     except Exception:
@@ -106,7 +115,7 @@ async def send_admin_reply(message: Message):
         return
 
     await message.answer("✅ Ответ отправлен пользователю!")
-    reply_targets[ADMIN_ID]["awaiting"] = False
+    reply_targets[admin_id]["awaiting"] = False
 
 # =========================
 # Запуск
